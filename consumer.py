@@ -91,9 +91,9 @@ try:
         # Print the results
         print("-" * 50)
         if is_new:
-            print(f"🌟 NEW TEMPLATE DISCOVERED: {template_id}")
+            print(f"  NEW TEMPLATE DISCOVERED: {template_id}")
         else:
-            print(f"🔄 MATCHED EXISTING TEMPLATE: {template_id}")
+            print(f"  MATCHED EXISTING TEMPLATE: {template_id}")
             
         print(f"RAW:       {raw_log}")
         print(f"CONSTANTS: {constant_string}")
