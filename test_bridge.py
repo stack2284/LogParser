@@ -1,17 +1,20 @@
 import time
-
-# 1. Import your custom compiled C++ module!
 import fast_log_parser
+from cluster_templates import TemplateClusterer
+from anomaly_detector import ParameterAnomalyDetector # NEW: Import our ML module
 
-print("Successfully imported C++ FastParser module!")
+print("Initializing Full AI Parsing Pipeline...")
 
-# 2. Instantiate the C++ class
+# 1. Instantiate the Pipeline Components
 parser = fast_log_parser.FastParser()
+clusterer = TemplateClusterer(similarity_threshold=0.7)
+anomaly_detector = ParameterAnomalyDetector(contamination=0.01) # 1% expected anomalies
 
 log_file_path = "HDFS_2k.log"
 line_count = 0
+anomalies_found = 0
 
-print(f"Reading {log_file_path} through the C++ engine...\n")
+print(f"Reading {log_file_path} through the hybrid engine...\n")
 
 start_time = time.time()
 
@@ -21,23 +24,39 @@ with open(log_file_path, "r") as file:
         if not log_message:
             continue
             
-        # 3. Call the C++ function natively from Python
-        # It returns a standard Python dictionary!
+        # ---------------------------------------------------------
+        # STEP 1: THE C++ FAST PATH (Parse & Mask)
+        # ---------------------------------------------------------
         result = parser.parse_line(log_message)
+        template_id = result['template_id']
         
+        # ---------------------------------------------------------
+        # STEP 2: ML CLUSTERING (Group similar structures)
+        # ---------------------------------------------------------
+        if result['is_new']:
+            master_id, merged = clusterer.add_template(template_id, result['clean_log'])
+        else:
+            master_id = clusterer.cluster_map.get(template_id, template_id)
+
+        # ---------------------------------------------------------
+        # STEP 3: PARAMETER ANOMALY DETECTION
+        # ---------------------------------------------------------
+        # We pass the raw log so the detector can see the actual numbers!
+        is_anomaly, msg = anomaly_detector.process_log(master_id, log_message)
+        
+        if is_anomaly:
+            anomalies_found += 1
+            print(f"  PARAMETER ANOMALY [{master_id}]: {msg}")
+            print(f"   RAW: {log_message}\n")
+
         line_count += 1
-        
-        # Print the first 5 results to verify the bridge works
-        if line_count <= 5:
-            if result['is_new']:
-                print(f"🌟 NEW: [{result['template_id']}] {result['clean_log']}")
-            else:
-                print(f"🔄 OLD: [{result['template_id']}] {result['clean_log']}")
 
 end_time = time.time()
 duration = end_time - start_time
 
 print("-" * 50)
-print(f"Processed {line_count} lines from Python.")
+print(f"Processed {line_count} lines.")
+print(f"Master Clusters Found: {clusterer.cluster_counter}")
+print(f"Parameter Anomalies Detected: {anomalies_found}")
 print(f"Time taken: {duration:.4f} seconds")
 print(f"Throughput: {line_count / duration:,.0f} logs/sec")
