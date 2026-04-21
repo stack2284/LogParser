@@ -1,55 +1,51 @@
 import time
 import fast_log_parser
 from cluster_templates import TemplateClusterer
-from anomaly_detector import ParameterAnomalyDetector # NEW: Import our ML module
+from anomaly_detector import ParameterAnomalyDetector
 
 print("Initializing Full AI Parsing Pipeline...")
 
 # 1. Instantiate the Pipeline Components
 parser = fast_log_parser.FastParser()
-clusterer = TemplateClusterer(similarity_threshold=0.7)
-anomaly_detector = ParameterAnomalyDetector(contamination=0.01) # 1% expected anomalies
+clusterer = TemplateClusterer(similarity_threshold=0.7)  # 128 perms (default)
+anomaly_detector = ParameterAnomalyDetector(contamination=0.01)
 
 log_file_path = "HDFS_2k.log"
-line_count = 0
 anomalies_found = 0
 
 print(f"Reading {log_file_path} through the hybrid engine...\n")
 
 start_time = time.time()
 
-with open(log_file_path, "r") as file:
-    for line in file:
-        log_message = line.strip()
-        if not log_message:
-            continue
+# Read and batch parse
+with open(log_file_path, "r") as f:
+    lines = [l.strip() for l in f if l.strip()]
+
+results = parser.parse_batch(lines)
+
+line_count = 0
+for res in results:
+    template_id = res['template_id']
+    
+    # STEP 2: ML CLUSTERING
+    if res['is_new']:
+        master_id, merged = clusterer.add_template(template_id, res['clean_log'])
+    else:
+        master_id = clusterer.cluster_map.get(template_id, template_id)
+
+    # STEP 3: PARAMETER ANOMALY DETECTION
+    # B10: skip anomaly detection for DEBUG/TRACE only
+    if not res.get('skip_anomaly', False):
+        params = res['params']
+        if params:
+            is_anomaly, msg = anomaly_detector.process_log(master_id, params)
             
-        # ---------------------------------------------------------
-        # STEP 1: THE C++ FAST PATH (Parse & Mask)
-        # ---------------------------------------------------------
-        result = parser.parse_line(log_message)
-        template_id = result['template_id']
-        
-        # ---------------------------------------------------------
-        # STEP 2: ML CLUSTERING (Group similar structures)
-        # ---------------------------------------------------------
-        if result['is_new']:
-            master_id, merged = clusterer.add_template(template_id, result['clean_log'])
-        else:
-            master_id = clusterer.cluster_map.get(template_id, template_id)
+            if is_anomaly:
+                anomalies_found += 1
+                print(f"  PARAMETER ANOMALY [{master_id}]: {msg}")
+                print(f"   RAW: {lines[line_count]}\n")
 
-        # ---------------------------------------------------------
-        # STEP 3: PARAMETER ANOMALY DETECTION
-        # ---------------------------------------------------------
-        # We pass the raw log so the detector can see the actual numbers!
-        is_anomaly, msg = anomaly_detector.process_log(master_id, log_message)
-        
-        if is_anomaly:
-            anomalies_found += 1
-            print(f"  PARAMETER ANOMALY [{master_id}]: {msg}")
-            print(f"   RAW: {log_message}\n")
-
-        line_count += 1
+    line_count += 1
 
 end_time = time.time()
 duration = end_time - start_time
